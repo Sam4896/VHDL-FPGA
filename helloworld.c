@@ -1,88 +1,89 @@
-/*
- * LED_test.c
- *
- *  Created on: 	13 June 2013
- *      Author: 	Ross Elliot
- *     Version:		1.1
- */
-
-/********************************************************************************************
-* VERSION HISTORY
-********************************************************************************************
-* v1.1 - 27 January 2014
-* 	GPIO_DEVICE_ID definition updated to reflect new naming conventions in Vivado 2013.3
-*		onwards.
-*
-*	v1.0 - 13 June 2013
-*		First version created.
-*******************************************************************************************/
-
-/********************************************************************************************
- * This file contains an example of using the GPIO driver to provide communication between
- * the Zynq Processing System (PS) and the AXI GPIO block implemented in the Zynq Programmable
- * Logic (PL). The AXI GPIO is connected to the LEDs on the ZedBoard.
- *
- * The provided code demonstrates how to use the GPIO driver to write to the memory mapped AXI
- * GPIO block, which in turn controls the LEDs.
- ********************************************************************************************/
-
-/* Include Files */
 #include "xparameters.h"
-#include "xgpio.h"
-#include "xstatus.h"
+#include "xgpiops.h"
+#include <stdio.h>
+#include "platform.h"
+#include "xuartps.h"
 #include "xil_printf.h"
+#include <sleep.h>
 
-/* Definitions */
-#define GPIO_DEVICE_ID  XPAR_AXI_GPIO_0_DEVICE_ID	/* GPIO device that LEDs are connected to */
-#define LED 0xC3									/* Initial LED value - XX0000XX */
-#define LED_DELAY 10000000							/* Software delay length */
-#define LED_CHANNEL 1								/* GPIO port for LEDs */
-#define printf xil_printf							/* smaller, optimised printf */
+//====================================================
+XUartPs_Config *Config_0;
+XUartPs Uart_PS_0;
 
-XGpio Gpio;											/* GPIO Device driver instance */
+#define NUM_OF_BYTE 1
 
-int LEDOutputExample(void)
+XGpioPs gpiops;
+XGpioPs_Config*GpioConfigPtr;
+
+
+int main (void)
 {
+	  init_platform();
+	  int Status;
+	  u8 BufferPtr_rx[1];
 
-	volatile int Delay;
-	int Status;
-	int led = LED; /* Hold current LED value. Initialise to LED definition */
+	  int xStatus,in1_status;
+	  int iPinNumberEMIO_RX = 54; // data sent to FPGA serial module on this port
+	  u32 uPinDirectionEMIO_RX = 0x1; // output to serial module in FPGA
 
-		/* GPIO driver initialisation */
-		Status = XGpio_Initialize(&Gpio, GPIO_DEVICE_ID);
+	  // PS GPIO Initialization
+	  GpioConfigPtr = XGpioPs_LookupConfig(XPAR_PS7_GPIO_0_DEVICE_ID);
+	  if(GpioConfigPtr == NULL)
+	    return XST_FAILURE;
+	  xStatus = XGpioPs_CfgInitialize(&gpiops,
+	      GpioConfigPtr,
+	      GpioConfigPtr->BaseAddr);
+	  if(XST_SUCCESS != xStatus)
+	    print(" PS GPIO INIT FAILED \n\r");
+
+	  // UART initialization
+		Config_0 = XUartPs_LookupConfig(XPAR_XUARTPS_0_DEVICE_ID);
+		if (NULL == Config_0) {
+			return XST_FAILURE;
+		}
+		Status = XUartPs_CfgInitialize(&Uart_PS_0, Config_0, Config_0->BaseAddress);
 		if (Status != XST_SUCCESS) {
 			return XST_FAILURE;
 		}
 
-		/*Set the direction for the LEDs to output. */
-		XGpio_SetDataDirection(&Gpio, LED_CHANNEL, 0x00);
+	  for(int k=0;k<8;k++)
+	  {
+		  XGpioPs_SetDirectionPin(&gpiops,iPinNumberEMIO_RX+k,uPinDirectionEMIO_RX);
+		  XGpioPs_SetOutputEnablePin(&gpiops, iPinNumberEMIO_RX+k, 1); // output to PL
+		  XGpioPs_WritePin(&gpiops, iPinNumberEMIO_RX+k, 0);
+	  }
 
-		/* Loop forever blinking the LED. */
-			while (1) {
-				/* Write output to the LEDs. */
-				XGpio_DiscreteWrite(&Gpio, LED_CHANNEL, led);
+	  print("\nHi the program has started.\n");
+	  while (1)
+	  {
 
-				/* Flip LEDs. */
-				led = ~led;
-
-				/* Wait a small amount of time so that the LED blinking is visible. */
-				for (Delay = 0; Delay < LED_DELAY; Delay++);
+			Status = 0;
+			while (Status < NUM_OF_BYTE) {
+				Status +=	XUartPs_Recv(&Uart_PS_0, BufferPtr_rx, (NUM_OF_BYTE - Status));
 			}
+			print("Received Character is: ");
+			XUartPs_Send(&Uart_PS_0, BufferPtr_rx, NUM_OF_BYTE+2);
+			printf(";\t Decimal representation of the character is: %u\n",BufferPtr_rx[0]);
+			in1_status=BufferPtr_rx[0];
 
-		return XST_SUCCESS; /* Should be unreachable */
+	        // array to store binary number
+	        int binaryNum[8];
+	        // counter for binary array
+	        int i = 0;
+	        while (in1_status > 0) {
+
+	            // storing remainder in binary array
+	            binaryNum[i] = in1_status % 2;
+	            in1_status = in1_status / 2;
+	            i++;
+	        }
+
+	        for (int j=0;j<8;j++)
+	        {
+		        XGpioPs_WritePin(&gpiops,iPinNumberEMIO_RX+j,binaryNum[j]);
+	        }
+
+	   }
 }
 
-/* Main function. */
-int main(void){
-
-	int Status;
-
-	/* Execute the LED output. */
-	Status = LEDOutputExample();
-	if (Status != XST_SUCCESS) {
-		xil_printf("GPIO output to the LEDs failed!\r\n");
-	}
-
-	return 0;
-}
 
